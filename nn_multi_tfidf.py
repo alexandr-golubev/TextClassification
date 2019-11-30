@@ -5,7 +5,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from keras import layers, models, regularizers
+from keras import layers
+from keras import models
 from keras.preprocessing.text import Tokenizer
 from mpl_toolkits.mplot3d import Axes3D
 from nltk.corpus import stopwords
@@ -15,8 +16,9 @@ from sklearn.decomposition import PCA
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.manifold import TSNE
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MultiLabelBinarizer
 from tok import word_tokenize
+from keras.utils.np_utils import to_categorical
 
 
 def tokenizer(text):
@@ -258,48 +260,43 @@ def tf_idf_representation(csv_file):
     :param csv_file:
     :return:
     """
-    texts = list(csv_file['0'])
-    labels = np.asarray(list(csv_file['1'])).astype('float32')
+    texts = list(csv_file['text'])
+    labels = list(csv_file['label'])
 
-    # corpus = list(map(tokenizer_tfidf, texts))
-    corpus = list(texts)
-    vectorizer = TfidfVectorizer(ngram_range=[1, 2], decode_error='ignore', lowercase=True, stop_words='english',
-                                 min_df=0.001)
+    for i in range(len(labels)):
+        labels[i] = labels[i].strip('][').split(', ')
+
+    corpus = list(map(tokenizer, texts))
+    # corpus = list(texts)
+
+    for i in range(len(corpus)):
+        corpus[i] = " ".join(corpus[i])
+
+    # mlb = MultiLabelBinarizer()
+    # labels = mlb.fit_transform(labels)
+    labels = to_categorical(labels)
+    # corpus = list(texts)
+
+    vectorizer = TfidfVectorizer(decode_error='ignore', lowercase=True, stop_words='english',
+                                 min_df=0.002)
     representations = vectorizer.fit_transform(corpus).toarray()
 
     return representations, labels, vectorizer
 
 
-def build_model(input_shape):
+def build_model(input_shape, output_shape):
     """
     построение модели
+    :param input_shape: входной слой = число признаков
+    :param output_shape: выходной слой = число классов
     :return:
     """
     model = models.Sequential()
-    model.add(layers.Dense(16, activation='relu', input_shape=(input_shape,)))
-    model.add(layers.Dropout(0.5))
-    model.add(layers.Dense(16,  activation='relu'))
-    model.add(layers.Dropout(0.5))
-    model.add(layers.Dense(1, activation='sigmoid'))
+    model.add(layers.Dense(64, activation='relu', input_shape=(input_shape,)))
+    model.add(layers.Dense(64, activation='relu'))
+    model.add(layers.Dense(output_shape, activation='softmax'))
     model.compile(optimizer='rmsprop',
-                  loss='binary_crossentropy',
-                  metrics=['accuracy'])
-    return model
-
-
-def build_model_rnn(input_shape):
-    """
-    построение модели rnn
-    :return:
-    """
-    model = models.Sequential()
-    model.add(layers.Dense(16, activation='relu', input_shape=(input_shape,)))
-    model.add(layers.Dropout(0.5))
-    model.add(layers.SimpleRNN(16))
-    model.add(layers.Dropout(0.5))
-    model.add(layers.Dense(1, activation='sigmoid'))
-    model.compile(optimizer='rmsprop',
-                  loss='binary_crossentropy',
+                  loss='categorical_crossentropy',
                   metrics=['accuracy'])
     return model
 
@@ -344,22 +341,23 @@ if __name__ == "__main__":
 
     start_time = time.time()
     stop_words = set(stopwords.words('english'))
+    num_classes = 20
 
     if 'DESKTOP-TF87PFA' in os.environ['COMPUTERNAME']:
         glove_dir = 'C:\\Users\\Alexandr\\Documents\\NLP\\diplom\\datasets\\glove.6B'
         imdb_dir: str = 'C:\\Users\\Alexandr\\Documents\\NLP\\diplom\\datasets\\aclImdb'
         train_dir = os.path.join(imdb_dir, 'train')
         test_dir = os.path.join(imdb_dir, 'test')
-        imdb_csv = 'C:\\Users\\Alexandr\\Documents\\NLP\\diplom\\datasets\\csv_files\\imdb.csv'
-        to_imdb_csv = 'C:\\Users\\Alexandr\\Documents\\NLP\\diplom\\datasets\\csv_files'
+        data_csv = 'C:\\Users\\Alexandr\\Documents\\NLP\\diplom\\datasets\\csv_files\\newsgroups.csv'
+        save_data_csv = 'C:\\Users\\Alexandr\\Documents\\NLP\\diplom\\datasets\\csv_files'
 
     else:
         glove_dir = 'D:\\datasets\\glove.6B'
         imdb_dir: str = 'D:\\datasets\\aclImdb'
         train_dir = os.path.join(imdb_dir, 'train')
         test_dir = os.path.join(imdb_dir, 'test')
-        imdb_csv = 'D:\\datasets\\csv_files\\imdb.csv'
-        to_imdb_csv = 'D:\\datasets\\csv_files'
+        data_csv = 'D:\\datasets\\csv_files\\newsgroups.csv'
+        save_data_csv = 'D:\\datasets\\csv_files'
 
     # region make_csv
     # Xy_train = csv_from_txts(train_dir)
@@ -368,32 +366,35 @@ if __name__ == "__main__":
     # endregion
 
     # загрузка данных, векторизация текстов
-    imdb_data = pd.read_csv(imdb_csv)
-    X, y, vector_mdl = tf_idf_representation(imdb_data)
+    data = pd.read_csv(data_csv)
+
+    X, y, vector_mdl = tf_idf_representation(data)
 
     # масштабирование выборок
     scaler = StandardScaler().fit_transform(X)
 
     # разделение выборки на тренировочную, тестовую и валидационную
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, shuffle=True)
-    val_size = round(len(X_train) * 0.33)
+    val_size = round(len(X_train)*0.33)
     X_val = X_train[:val_size]
     X_train = X_train[val_size:]
     y_val = y_train[:val_size]
     y_train = y_train[val_size:]
 
-    mdl = build_model_rnn(X.shape[1])
+    mdl = build_model(X.shape[1], num_classes)
     history = mdl.fit(X_train,
                       y_train,
-                      epochs=7,
+                      epochs=10,
                       batch_size=512,
                       validation_data=(X_val, y_val))
     loss_graph(history)
     accuracy_graph(history)
     print(mdl.evaluate(X_test, y_test))
-    print(mdl.summary())
+    predictions = mdl.predict(X_test)
+
     # my_own_text = ["test"]
     # my_own_test = vector_mdl.transform(my_own_text)
+    #
     # print(mdl.predict(my_own_test))
 
     total_time = round((time.time() - start_time))
